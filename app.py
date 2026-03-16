@@ -1404,6 +1404,8 @@ def approve_bulk():
 # 이미지 제공
 @app.route("/uploads/<path:filename>")
 def uploaded_file(filename):
+    import mimetypes
+    mimetypes.add_type("image/webp", ".webp")
     return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
 
 
