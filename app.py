@@ -1406,7 +1406,9 @@ def approve_bulk():
 # 이미지 제공
 @app.route("/uploads/<path:filename>")
 def uploaded_file(filename):
-    return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
+    resp = send_from_directory(app.config["UPLOAD_FOLDER"], filename)
+    resp.headers["Cache-Control"] = "public, max-age=86400"
+    return resp
 
 
 # 개별 이미지 JPG 다운로드/목록 제공 라우트
