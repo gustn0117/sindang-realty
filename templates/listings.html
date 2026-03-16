@@ -1,0 +1,506 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+  .listing-card { transition: all var(--transition); }
+  .listing-card:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
+  .listing-body { display: flex; align-items: stretch; }
+  .listing-chk { flex: 0 0 36px; display: flex; align-items: center; justify-content: center; background: var(--bg); border-right: 1px solid var(--border-light); }
+  .listing-chk input { transform: scale(1.1); accent-color: var(--primary); cursor: pointer; }
+  .listing-thumb { flex: 0 0 100px; display: block; overflow: hidden; }
+  .listing-thumb img { width: 100%; height: 100%; min-height: 90px; object-fit: cover; display: block; }
+  .listing-thumb.empty { background: var(--bg); display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: .75rem; }
+  .listing-info { flex: 1; padding: 12px 14px; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 4px; }
+  .listing-info h3 { margin: 0; font-size: .95rem; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .listing-info .meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; color: var(--text-secondary); font-size: .8rem; }
+  .listing-info .price-row { display: flex; justify-content: space-between; align-items: center; margin-top: 2px; }
+  .listing-info .price-row .price { font-weight: 700; font-size: .88rem; color: var(--text); }
+  .listing-hide-toggle { flex: 0 0 36px; display: flex; align-items: center; justify-content: center; border-left: 1px solid var(--border-light); }
+  .listing-hide-toggle input { transform: scale(.9); accent-color: var(--warn); cursor: pointer; }
+  .chip input[type="checkbox"] { accent-color: var(--primary); }
+  #btn-approve-selected:disabled { opacity: .5; cursor: not-allowed; }
+
+  @media (min-width: 769px) {
+    #filters .filters {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+      align-items: flex-end;
+    }
+    #filters .filter-item.wide { grid-column: 1 / -1; }
+    #filters .filter-item.checkbox { align-self: center; }
+    #filters .filter-item.fav-dong { grid-column: span 2; }
+    #filters .filter-item.city-filter { grid-column: span 1; }
+    #filters .filters-actions {
+      grid-column: 1 / -1;
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 4px;
+    }
+  }
+
+  /* Mobile */
+  @media (max-width: 768px) {
+    #filters .card.filters-form { display: block; }
+    .split { display: flex !important; flex-direction: column !important; gap: 12px !important; }
+    .list-pane { gap: 8px !important; }
+    .listing-card { border-radius: var(--radius-sm) !important; }
+    .listing-thumb { flex: 0 0 80px !important; }
+    .listing-thumb img { min-height: 72px !important; }
+    .listing-info { padding: 10px 12px !important; }
+    .listing-info h3 { font-size: .88rem !important; }
+    .listing-info .meta { font-size: .75rem !important; }
+    .listing-info .price-row .price { font-size: .82rem !important; }
+    .listing-body { flex-direction: row !important; }
+    .header-actions { flex-direction: column; gap: 8px; width: 100%; }
+    .header-actions .btn, .header-actions .chip { width: 100%; justify-content: center; text-align: center; }
+  }
+  @media (max-width: 480px) {
+    .listing-thumb { flex: 0 0 70px !important; }
+    .listing-info { padding: 8px 10px !important; }
+    .listing-chk { flex: 0 0 30px; }
+    .listing-hide-toggle { flex: 0 0 30px; }
+  }
+</style>
+
+{% macro label_with_ho(l) -%}
+  {%- set base = l.display_name or l.title or '' -%}
+  {%- if l.ho -%}
+    {%- set ho_str = l.ho ~ '호' -%}
+    {%- if ho_str in base or (l.ho in base) -%}
+      {{- base -}}
+    {%- else -%}
+      {{- base ~ ' ' ~ ho_str -}}
+    {%- endif -%}
+  {%- else -%}
+    {{- base -}}
+  {%- endif -%}
+{%- endmacro %}
+
+<!-- Header -->
+<div class="card" style="padding:16px 20px; margin-bottom:12px;">
+  <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+    <div>
+      <h2 style="margin:0; font-size:1.2rem;">매물 목록</h2>
+      <p style="margin:2px 0 0; color:var(--muted); font-size:.8rem;">총 <strong style="color:var(--text);">{{ listings|length }}</strong>건</p>
+    </div>
+    <div class="header-actions" style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+      <label class="chip" style="cursor:pointer; user-select:none; font-size:.82rem; padding:5px 10px;">
+        <input type="checkbox" id="sel-all" style="margin-right:3px;"> 전체선택
+      </label>
+      <button type="button" id="btn-approve-selected" class="btn btn-success" style="padding:7px 12px; font-size:.82rem;" disabled>일괄승인</button>
+      <button type="button" id="btn-hide-selected" class="btn btn-outline" style="padding:7px 12px; font-size:.82rem;" disabled>선택 숨김</button>
+      <button type="button" id="btn-unhide-selected" class="btn btn-outline" style="padding:7px 12px; font-size:.82rem;" disabled>숨김 해제</button>
+      <a href="{{ url_for('listing_new') }}" class="btn btn-primary" style="padding:7px 14px; font-size:.82rem;">+ 매물등록</a>
+    </div>
+  </div>
+</div>
+
+<!-- Filters -->
+<section id="filters">
+  <form id="filters-form" class="card filters-form" method="get" style="margin-bottom:16px;">
+    <div class="filters">
+      <div class="filter-item wide">
+        <label for="region">지역</label>
+        <input id="region" type="text" name="region" placeholder="예: 신당동 1668-2 / 선원로15안길" value="{{ request.args.get('region','') }}">
+      </div>
+
+      <div class="filter-item">
+        <label>거래유형</label>
+        <select name="trade_type">
+          <option value="">전체</option>
+          {% for t in ['매매','전세','월세','단기임대','분양'] %}
+            <option value="{{t}}" {% if request.args.get('trade_type')==t %}selected{% endif %}>{{t}}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="filter-item">
+        <label>매물종류</label>
+        <select name="category">
+          <option value="">전체</option>
+          {% for c in ['원룸','미니투룸','투룸','쓰리룸','주인세대'] %}
+            <option value="{{ c }}" {% if request.args.get('category')==c %}selected{% endif %}>{{ c }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="filter-item">
+        <label>구조</label>
+        <select name="structure">
+          <option value="">전체</option>
+          {% for s in ['원룸','투룸','쓰리룸','주인세대'] %}
+            <option value="{{ s }}" {% if request.args.get('structure')==s %}selected{% endif %}>{{ s }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="filter-item">
+        <label>키워드</label>
+        <input type="text" name="keyword" placeholder="올수리, 역세권..." value="{{ request.args.get('keyword','') }}">
+      </div>
+
+      <div class="filter-item">
+        <label>승인 상태</label>
+        <select name="status">
+          <option value="">전체</option>
+          {% for s in ['approved','pending','rejected'] %}
+            <option value="{{s}}" {% if request.args.get('status')==s %}selected{% endif %}>{{s}}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="filter-item checkbox">
+        <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+          <input type="checkbox" name="balcony" value="1" {% if request.args.get('balcony','')|lower in ['1','true','on','y','yes'] %}checked{% endif %}> 베란다 있음만
+        </label>
+      </div>
+
+      <div class="filter-item">
+        <label>정렬</label>
+        <select name="sort">
+          <option value="latest" {% if request.args.get('sort','latest')=='latest' %}selected{% endif %}>최신순</option>
+          <option value="price" {% if request.args.get('sort')=='price' %}selected{% endif %}>가격순</option>
+          <option value="jibun" {% if request.args.get('sort')=='jibun' %}selected{% endif %}>지번순</option>
+        </select>
+      </div>
+
+      <div class="filter-item checkbox">
+        <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+          <input type="checkbox" name="show_hidden" value="1" {% if request.args.get('show_hidden')=='1' %}checked{% endif %} onchange="this.form.submit()"> 숨김 포함 보기
+        </label>
+      </div>
+
+      <div class="filter-item checkbox city-filter">
+        <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+          <input type="checkbox" name="only_gyeongsan" value="1"
+                 {% if request.args.get('only_gyeongsan','')|lower in ['1','true','on','y','yes'] %}checked{% endif %}
+                 onchange="this.form.submit()">
+          경산시 매물만
+        </label>
+        <small style="display:block; margin-top:2px; color:var(--muted); font-size:.75rem;">(체크하면 경산시 매물만 필터링)</small>
+      </div>
+
+      <div class="filter-item fav-dong">
+        <label for="fav-dong">자주 이용하는 동 (복수 선택)</label>
+        {% set sel = request.args.getlist('dongs') %}
+        <select id="fav-dong" name="dongs" multiple size="4">
+          {% for dong in ['호산동','신당동','이곡동','용산동'] %}
+            <option value="{{ dong }}" {% if dong in sel %}selected{% endif %}>{{ dong }}</option>
+          {% endfor %}
+        </select>
+        <small style="display:block; margin-top:2px; color:var(--muted); font-size:.75rem;">Ctrl/Cmd + 클릭으로 복수 선택</small>
+      </div>
+
+      <div class="filters-actions">
+        <a class="btn btn-outline" href="{{ url_for('listings') }}">초기화</a>
+        <button type="submit" class="btn btn-primary">검색</button>
+      </div>
+    </div>
+  </form>
+</section>
+
+<!-- Main Content -->
+<div class="split" style="display:grid; grid-template-columns:1fr 360px; gap:14px; align-items:start;">
+  <div class="list-pane" data-no-lightbox style="display:grid; gap:8px;">
+    {% for l in listings %}
+      <article class="card listing-card" data-listing-id="{{ l.id }}" style="padding:0; overflow:hidden; {% if l.hidden %}opacity:.55;{% endif %}">
+        <div class="listing-body">
+          <!-- Checkbox -->
+          <div class="listing-chk">
+            <input type="checkbox" class="sel" value="{{ l.id }}" title="선택">
+          </div>
+
+          <!-- Thumbnail -->
+          {% if l.images and l.images|length > 0 %}
+          <a href="{{ url_for('listing_detail', listing_id=l.id) }}" class="listing-thumb">
+            <img src="{{ url_for('uploaded_file', filename=l.images[0].filename) }}"
+                 loading="lazy" decoding="async"
+                 alt="{{ l.display_name or l.title }}">
+          </a>
+          {% else %}
+          <div class="listing-thumb empty">No img</div>
+          {% endif %}
+
+          <!-- Info -->
+          <div class="listing-info">
+            <a href="{{ url_for('listing_detail', listing_id=l.id) }}" style="text-decoration:none;">
+              <h3>{{ label_with_ho(l) }}</h3>
+            </a>
+            <div class="meta">
+              <span>{{ l.category }} &middot; {{ l.trade_type }}</span>
+              {% set addr = l.jibun_addr or l.road_addr %}
+              {% if addr %}
+              <span style="opacity:.35;">&bull;</span>
+              <span class="addr-text"
+                    data-id="{{ l.id }}"
+                    data-road="{{ l.road_addr or '' }}"
+                    data-jibun="{{ l.jibun_addr or '' }}"
+                    {% if l.lat and l.lng %}data-lat="{{ l.lat }}" data-lng="{{ l.lng }}"{% endif %}
+                    style="max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+                {{ addr }}
+              </span>
+              {% endif %}
+              {% if l.balcony %}<span class="badge balcony" style="font-size:.7rem; padding:1px 6px;">베란다</span>{% endif %}
+              <span class="badge hidden-badge" style="background:var(--bg); color:var(--muted); font-size:.7rem; padding:1px 6px; {% if not l.hidden %}display:none;{% endif %}">숨김</span>
+            </div>
+            <div class="price-row">
+              <span class="price">
+                {% if l.trade_type == '월세' %}
+                  {{ '{:,}'.format(l.deposit or 0) }} / {{ '{:,}'.format(l.rent or 0) }}
+                {% elif l.trade_type == '전세' %}
+                  전세 {{ '{:,}'.format(l.deposit or 0) }}
+                {% elif l.trade_type == '매매' %}
+                  매매 {{ '{:,}'.format(l.sale_price or 0) }}
+                {% else %}
+                  -
+                {% endif %}
+              </span>
+              <span class="badge {{ 'approved' if l.status=='approved' else 'pending' if l.status=='pending' else 'rejected' if l.status=='rejected' else '' }}" style="text-transform:capitalize; font-size:.7rem;">{{ l.status }}</span>
+            </div>
+          </div>
+
+          <!-- Hide toggle -->
+          <div class="listing-hide-toggle" title="숨김 토글">
+            <input type="checkbox" class="toggle-hidden" data-id="{{ l.id }}" {% if l.hidden %}checked{% endif %}>
+          </div>
+        </div>
+      </article>
+    {% else %}
+      <p class="empty">조건에 맞는 매물이 없습니다.</p>
+    {% endfor %}
+  </div>
+
+  <div class="map-pane" style="position:sticky; top:76px;">
+    <div id="map" style="width:100%; height:100%; border:1px solid var(--border); border-radius:var(--radius); overflow:hidden; min-height:480px;"></div>
+  </div>
+</div>
+
+{% if map_key %}
+<script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey={{ map_key }}&libraries=services"></script>
+<script>
+(function(){
+  var mapContainer = document.getElementById('map');
+  var map = new kakao.maps.Map(mapContainer, {
+    center: new kakao.maps.LatLng(37.5665, 126.9780),
+    level: 7
+  });
+
+  var markers = [];
+  {% for l in listings if l.lat and l.lng %}
+    (function(){
+      var pos = new kakao.maps.LatLng({{ l.lat }}, {{ l.lng }});
+      var marker = new kakao.maps.Marker({ position: pos });
+      marker.setMap(map);
+      markers.push(marker);
+      var iw = new kakao.maps.InfoWindow({ content:
+        '<div style="padding:8px 10px;font-size:13px;max-width:220px;">' +
+        '<strong>{{ label_with_ho(l)|e }}</strong><br>' +
+        '{{ (l.jibun_addr or l.road_addr)|e }}<br>' +
+        '{{ l.category }} · {{ l.trade_type }}{% if l.trade_type == "월세" %} · 보증금 {{ "{:,}".format(l.deposit or 0) }} / 월세 {{ "{:,}".format(l.rent or 0) }}{% elif l.trade_type == "전세" %} · 전세 {{ "{:,}".format(l.deposit or 0) }}{% elif l.trade_type == "매매" %} · 매매가 {{ "{:,}".format(l.sale_price or 0) }}{% endif %}' +
+        '</div>'});
+      kakao.maps.event.addListener(marker, 'click', function(){ iw.open(map, marker); });
+    })();
+  {% endfor %}
+
+  if(markers.length){
+    var bounds = new kakao.maps.LatLngBounds();
+    markers.forEach(m => bounds.extend(m.getPosition()));
+    map.setBounds(bounds);
+  }
+})();
+</script>
+<script>
+(function(){
+  var container = document.getElementById('filters');
+  if (!container) return;
+  var form = container.querySelector('form#filters-form') || container.querySelector('form');
+  if (!form) return;
+  var regionInput = form.querySelector('input[name="region"]');
+  if (!regionInput) return;
+  var isSubmitting = false;
+  var hasKakao = (window.kakao && kakao.maps && kakao.maps.services);
+  var geocoder = hasKakao ? new kakao.maps.services.Geocoder() : null;
+  var places   = hasKakao ? new kakao.maps.services.Places()   : null;
+
+  form.addEventListener('submit', function(e){
+    if (isSubmitting) return;
+    var q = (regionInput.value || '').trim();
+    if (!q || !hasKakao) return;
+    e.preventDefault();
+    geocoder.addressSearch(q, function(result, status){
+      if (status === kakao.maps.services.Status.OK && result.length){
+        var r = result[0];
+        var normalized =
+          (r.road_address && r.road_address.address_name) ? r.road_address.address_name :
+          (r.address && r.address.address_name) ? r.address.address_name : q;
+        regionInput.value = normalized;
+        isSubmitting = true;
+        form.submit();
+      } else {
+        places.keywordSearch(q, function(data, status2){
+          if (status2 === kakao.maps.services.Status.OK && data.length){
+            var d = data[0];
+            regionInput.value = d.road_address_name || d.address_name || q;
+          }
+          isSubmitting = true;
+          form.submit();
+        });
+      }
+    });
+  });
+})();
+</script>
+<script>
+(function(){
+  if (!(window.kakao && kakao.maps && kakao.maps.services)) return;
+  var geocoder = new kakao.maps.services.Geocoder();
+  var nodes = document.querySelectorAll('.addr-text');
+  nodes.forEach(function(el){
+    var jibun = el.getAttribute('data-jibun') || '';
+    var lat = el.getAttribute('data-lat');
+    var lng = el.getAttribute('data-lng');
+    if (jibun || !lat || !lng) return;
+    geocoder.coord2Address(parseFloat(lng), parseFloat(lat), function(result, status){
+      if (status === kakao.maps.services.Status.OK && result && result.length){
+        var addr =
+          (result[0].address && result[0].address.address_name) ||
+          (result[0].road_address && result[0].road_address.address_name) ||
+          '';
+        if (addr){
+          el.textContent = addr;
+          el.setAttribute('data-jibun', addr);
+        }
+      }
+    });
+  });
+})();
+</script>
+<script>
+(function(){
+  const selAll = document.getElementById('sel-all');
+  const btnApprove = document.getElementById('btn-approve-selected');
+  const btnHide = document.getElementById('btn-hide-selected');
+  const btnUnhide = document.getElementById('btn-unhide-selected');
+
+  function currentSelections(){
+    return Array.from(document.querySelectorAll('input.sel:checked')).map(el=>el.value);
+  }
+
+  function updateButtons(){
+    const ids = currentSelections();
+    const disabled = ids.length === 0;
+    if (btnApprove) btnApprove.disabled = disabled;
+    if (btnHide) btnHide.disabled = disabled;
+    if (btnUnhide) btnUnhide.disabled = disabled;
+    if (btnApprove) btnApprove.textContent = ids.length ? `일괄승인 (${ids.length})` : '일괄승인';
+    if (btnHide) btnHide.textContent = ids.length ? `선택 숨김 (${ids.length})` : '선택 숨김';
+    if (btnUnhide) btnUnhide.textContent = ids.length ? `숨김 해제 (${ids.length})` : '숨김 해제';
+  }
+
+  async function bulkSetHidden(ids, hidden){
+    const fd = new FormData();
+    ids.forEach(id => fd.append('ids[]', id));
+    fd.append('hidden', hidden ? '1' : '0');
+    const res = await fetch('/listings/bulk_set_hidden', { method: 'POST', body: fd });
+    let j = null;
+    try { j = await res.json(); } catch(e) {}
+    if (res.ok && j && j.ok){
+      ids.forEach((id) => {
+        const card = document.querySelector(`article.card[data-listing-id="${id}"]`);
+        if (!card) return;
+        card.style.opacity = hidden ? '0.55' : '';
+        const badge = card.querySelector('.hidden-badge');
+        if (badge) badge.style.display = hidden ? '' : 'none';
+        const perToggle = card.querySelector('input.toggle-hidden');
+        if (perToggle) perToggle.checked = !!hidden;
+      });
+      document.querySelectorAll('input.sel:checked').forEach(cb => cb.checked = false);
+      const selAll = document.getElementById('sel-all');
+      if (selAll) selAll.checked = false;
+      if (typeof updateButtons === 'function') updateButtons();
+      return;
+    }
+    alert('숨김 처리 실패: ' + ((j && (j.error || j.message)) || '알 수 없음'));
+  }
+
+  async function setHiddenOne(listingId, hidden){
+    const fd = new FormData();
+    fd.append('hidden', hidden ? '1' : '0');
+    const res = await fetch(`/listings/${listingId}/set_hidden`, { method: 'POST', body: fd });
+    let j = null;
+    try { j = await res.json(); } catch(e) {}
+    if (res.ok && j && j.ok){
+      const card = document.querySelector(`article.card[data-listing-id="${listingId}"]`);
+      if (card){
+        card.style.opacity = hidden ? '0.55' : '';
+        const badge = card.querySelector('.hidden-badge');
+        if (badge) badge.style.display = hidden ? '' : 'none';
+      }
+      return;
+    }
+    alert('숨김 처리 실패: ' + ((j && (j.error || j.message)) || '알 수 없음'));
+  }
+
+  if (selAll){
+    selAll.addEventListener('change', ()=>{
+      document.querySelectorAll('input.sel').forEach(cb=> cb.checked = selAll.checked);
+      updateButtons();
+    });
+  }
+
+  document.addEventListener('change', (e)=>{
+    if(e.target && e.target.classList && e.target.classList.contains('sel')){
+      if(selAll){
+        const all = Array.from(document.querySelectorAll('input.sel'));
+        selAll.checked = all.length>0 && all.every(cb=>cb.checked);
+      }
+      updateButtons();
+    }
+  });
+
+  document.addEventListener('change', async (e)=>{
+    const t = e.target;
+    if (!t || !t.classList || !t.classList.contains('toggle-hidden')) return;
+    const id = t.getAttribute('data-id');
+    if (!id) return;
+    await setHiddenOne(id, !!t.checked);
+  });
+
+  if(btnApprove){
+    updateButtons();
+    btnApprove.addEventListener('click', async ()=>{
+      const ids = currentSelections();
+      if(ids.length===0) return;
+      const fd = new FormData();
+      ids.forEach(id=> fd.append('ids[]', id));
+      const res = await fetch('{{ url_for('approve_bulk') }}', { method:'POST', body: fd });
+      try {
+        const j = await res.json();
+        if(j && j.ok){ location.reload(); }
+        else { alert('승인 실패: ' + (j.error || '알 수 없음')); }
+      } catch(err){ alert('승인 실패'); }
+    });
+  } else { updateButtons(); }
+
+  if (btnHide){
+    btnHide.addEventListener('click', async ()=>{
+      const ids = currentSelections();
+      if(ids.length===0) return;
+      await bulkSetHidden(ids, true);
+    });
+  }
+
+  if (btnUnhide){
+    btnUnhide.addEventListener('click', async ()=>{
+      const ids = currentSelections();
+      if(ids.length===0) return;
+      await bulkSetHidden(ids, false);
+    });
+  }
+})();
+</script>
+{% else %}
+<p class="muted">카카오맵 키가 설정되지 않았습니다(.env KAKAO_MAP_KEY).</p>
+{% endif %}
+{% endblock %}

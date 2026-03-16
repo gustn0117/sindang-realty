@@ -1,0 +1,362 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+  @media (min-width: 769px) {
+    .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+    .grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+  }
+  @media (max-width: 768px) {
+    .grid-4 { display: grid !important; grid-template-columns: repeat(2, 1fr) !important; gap: 10px !important; }
+    .grid-2 { display: grid !important; grid-template-columns: 1fr !important; gap: 10px !important; }
+    fieldset { padding: 14px !important; }
+    .dropzone { padding: 20px 14px; }
+    #preview, #existingImages { grid-template-columns: repeat(3, 1fr) !important; gap: 6px !important; }
+    .form .actions { flex-direction: column; gap: 8px; }
+    .form .actions .ghost, .form .actions button { width: 100%; text-align: center; }
+    #pickmap { height: 220px !important; }
+  }
+  @media (max-width: 480px) {
+    .grid-4 { grid-template-columns: 1fr !important; }
+    #preview, #existingImages { grid-template-columns: repeat(2, 1fr) !important; }
+  }
+</style>
+
+<div style="margin-bottom:24px;">
+  <h1>{{ '매물 수정' if listing else '매물 등록' }}</h1>
+  <p style="margin-top:4px; color:var(--text-secondary);">{{ '매물 정보를 수정합니다.' if listing else '새 매물을 등록합니다.' }}</p>
+</div>
+
+<form class="form" method="post" enctype="multipart/form-data">
+  <fieldset>
+    <legend>기본 정보</legend>
+    <label>건물명<input name="title" required value="{{ listing.title if listing }}" placeholder="건물명을 입력하세요"></label>
+    <label>매물 종류
+      <input name="category" list="category-list" required value="{{ listing.category if listing }}" placeholder="예: 원룸 / 투룸 / 직접 입력" />
+      <datalist id="category-list">
+        <option value="원룸">
+        <option value="미니투룸">
+        <option value="투룸">
+        <option value="쓰리룸">
+        <option value="주인세대">
+      </datalist>
+    </label>
+    <label>거래 유형
+      <select name="trade_type" required>
+        {% for t in ['매매','전세','월세','단기임대','분양'] %}
+          <option value="{{t}}" {% if (listing and listing.trade_type==t) or (not listing and t=='월세') %}selected{% endif %}>{{t}}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <div class="grid-4">
+      <label>보증금(만원)<input type="number" inputmode="numeric" step="1" name="deposit" value="{{ listing.deposit if listing }}" placeholder="0"></label>
+      <label>월세(만원)<input type="number" inputmode="numeric" step="1" name="rent" value="{{ listing.rent if listing }}" placeholder="0"></label>
+      <label>관리비(만원)<input type="number" inputmode="numeric" step="1" name="maintenance_fee" value="{{ listing.maintenance_fee if listing }}" placeholder="0"></label>
+      <label>매매가(만원)<input type="number" inputmode="numeric" step="1" name="sale_price" value="{{ listing.sale_price if listing }}" placeholder="0"></label>
+    </div>
+    <label>구조
+      <input name="structure" placeholder="원룸/투룸/주인세대..." value="{{ listing.structure if listing }}">
+    </label>
+    <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+      <input type="checkbox" name="balcony" {% if listing and listing.balcony %}checked{% endif %} style="accent-color:var(--primary);"> 베란다 있음
+    </label>
+  </fieldset>
+
+  <fieldset>
+    <legend>주소</legend>
+    <label>주소
+      <input id="addr" name="road_addr" placeholder="예: 신당동 1668-2 또는 도로명" value="{{ listing.road_addr if listing }}">
+    </label>
+    <div class="grid-2">
+      <label>동<input name="dong" value="{{ listing.dong if listing }}" placeholder="동 이름"></label>
+      <label>호<input name="ho" value="{{ listing.ho if listing }}" placeholder="호수"></label>
+    </div>
+
+    <input type="hidden" id="lat" name="lat" value="{{ listing.lat if listing }}">
+    <input type="hidden" id="lng" name="lng" value="{{ listing.lng if listing }}">
+
+    {% if map_key %}
+      <div style="display:flex; align-items:center; gap:10px; margin:8px 0 12px;">
+        <button type="button" id="geocodeBtn" class="btn btn-outline" style="padding:8px 16px;">주소 찾기</button>
+        <span class="hint" style="margin:0;">주소 입력 후 '주소 찾기'를 누르거나 포커스 아웃 시 자동 보정</span>
+      </div>
+      <div id="pickmap" style="height:280px; border:1px solid var(--border); border-radius:var(--radius); overflow:hidden;"></div>
+      <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey={{ map_key }}&libraries=services"></script>
+      <script>
+      (function(){
+        var mapContainer = document.getElementById('pickmap');
+        var center = new kakao.maps.LatLng(
+          {{ listing.lat if listing and listing.lat else 37.5665 }},
+          {{ listing.lng if listing and listing.lng else 126.9780 }}
+        );
+        var map = new kakao.maps.Map(mapContainer, { center: center, level: 6 });
+        var marker = new kakao.maps.Marker({ position: center });
+        marker.setMap(map);
+
+        var geocoder = new kakao.maps.services.Geocoder();
+        var places = new kakao.maps.services.Places();
+
+        function setMarker(lat, lng){
+          var pos = new kakao.maps.LatLng(lat, lng);
+          marker.setPosition(pos);
+          map.setCenter(pos);
+        }
+
+        function geocode(){
+          var q = document.getElementById('addr').value.trim();
+          if(!q) return;
+          geocoder.addressSearch(q, function(result, status){
+            if(status === kakao.maps.services.Status.OK && result.length){
+              var r = result[0];
+              var lat = r.y, lng = r.x;
+              var normalized = (r.road_address && r.road_address.address_name) ? r.road_address.address_name
+                              : (r.address && r.address.address_name) ? r.address.address_name : q;
+              document.getElementById('addr').value = normalized;
+              document.getElementById('lat').value = lat;
+              document.getElementById('lng').value = lng;
+              setMarker(lat, lng);
+              var dongInput = document.querySelector('input[name="dong"]');
+              var dongName = (r.road_address && r.road_address.region_3depth_name) || (r.address && r.address.region_3depth_name);
+              if (dongInput && dongName) dongInput.value = dongName;
+            } else {
+              places.keywordSearch(q, function(data, status2){
+                if(status2 === kakao.maps.services.Status.OK && data.length){
+                  var d = data[0];
+                  document.getElementById('lat').value = d.y;
+                  document.getElementById('lng').value = d.x;
+                  setMarker(d.y, d.x);
+                  var dongInput = document.querySelector('input[name="dong"]');
+                  var addrStr = d.road_address_name || d.address_name || '';
+                  var parts = addrStr.split(' ');
+                  var guess = parts.find(function(t){ return /[동읍면]$/.test(t); });
+                  if (dongInput && guess) dongInput.value = guess;
+                }
+              });
+            }
+          });
+        }
+
+        document.getElementById('geocodeBtn').addEventListener('click', geocode);
+        document.getElementById('addr').addEventListener('blur', geocode);
+
+        var initLat = document.getElementById('lat').value, initLng = document.getElementById('lng').value;
+        if(initLat && initLng) setMarker(initLat, initLng);
+      })();
+      </script>
+    {% else %}
+      <p class="muted">카카오맵 키가 설정되지 않아 지도를 표시할 수 없습니다(.env KAKAO_MAP_KEY).</p>
+    {% endif %}
+  </fieldset>
+
+  <fieldset>
+    <legend>설명/옵션</legend>
+    <label>매물 특징 요약(콤마로 구분)<input name="features" placeholder="올수리, 역세권, 조용한동네" value="{{ listing.features if listing }}"></label>
+    <label>옵션 항목(콤마로 구분)<input name="options" placeholder="냉장고, 세탁기, 에어컨" value="{{ listing.options if listing }}"></label>
+    <label>매물 상세 설명<textarea name="description" rows="5" placeholder="매물에 대한 상세 설명을 입력하세요">{{ listing.description if listing }}</textarea></label>
+    <label>내부 메모<textarea name="memo" rows="3" placeholder="내부 참고용 메모">{{ listing.memo if listing }}</textarea></label>
+  </fieldset>
+
+  <fieldset>
+    <legend>이미지</legend>
+    <div id="dropzone" class="dropzone">
+      <p>여기로 이미지를 드래그하거나 클릭하여 업로드하세요</p>
+      <small>JPG, PNG, WEBP 등 이미지 파일을 여러 장 업로드할 수 있습니다.</small>
+      <input type="file" id="fileInput" name="images" accept="image/*" multiple hidden>
+    </div>
+    <div id="preview" class="thumbs"></div>
+    <input type="hidden" id="deleteImages" name="delete_images" value="">
+    {% if listing and listing.images %}
+      <div id="existingImages" class="thumbs sortable">
+        {% for img in listing.images %}
+          <div class="thumb" data-id="{{ img.id }}" draggable="true" style="position:relative;">
+            <span class="chip chip-num" style="position:absolute;top:6px;left:6px;background:rgba(0,0,0,.6);color:#fff;border-radius:12px;padding:2px 8px;font-size:.75rem;">#</span>
+            <span class="chip chip-rep" style="position:absolute;bottom:6px;left:6px;background:var(--primary);color:#fff;border-radius:12px;padding:2px 8px;font-size:.75rem;display:none;">대표</span>
+            <button type="button" class="chip btn-delete" title="삭제" aria-label="삭제" style="position:absolute;top:6px;right:6px;background:rgba(0,0,0,.6);color:#fff;border:none;border-radius:50%;width:26px;height:26px;cursor:pointer;font-size:.8rem;display:flex;align-items:center;justify-content:center;">&times;</button>
+            <button type="button" class="chip btn-cover" title="표지로 지정" aria-label="표지로 지정" style="position:absolute;bottom:6px;right:6px;background:rgba(0,0,0,.6);color:#fff;border:none;border-radius:12px;padding:2px 8px;cursor:pointer;font-size:.75rem;">표지</button>
+            <img src="{{ url_for('uploaded_file', filename=img.filename) }}"
+                 loading="lazy" decoding="async"
+                 data-lightbox
+                 data-lightbox-group="listing-{{ listing.id }}"
+                 data-lightbox-src="{{ url_for('uploaded_file', filename=img.filename) }}"
+                 alt="image" style="display:block;width:100%;height:120px;object-fit:cover;">
+          </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+    <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const dropzone = document.getElementById('dropzone');
+      const fileInput = document.getElementById('fileInput');
+      const preview = document.getElementById('preview');
+      const form = document.querySelector('form.form') || document.querySelector('form');
+      const delInput = document.getElementById('deleteImages');
+      const dt = new DataTransfer();
+
+      dropzone.addEventListener('click', () => fileInput.click());
+      dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('dragover'); });
+      dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+      dropzone.addEventListener('drop', e => { e.preventDefault(); dropzone.classList.remove('dragover'); addFiles(e.dataTransfer.files); });
+      fileInput.addEventListener('change', e => addFiles(e.target.files));
+
+      function addFiles(files){
+        for(const file of files){
+          dt.items.add(file);
+          const reader = new FileReader();
+          reader.onload = ev => {
+            const div = document.createElement('div');
+            div.className = 'thumb';
+            div.draggable = true;
+            div.dataset.new = '1';
+            div.dataset.filename = file.name;
+            div.style.position = 'relative';
+            div.innerHTML = `
+              <span class="chip chip-num" style="position:absolute;top:6px;left:6px;background:rgba(0,0,0,.6);color:#fff;border-radius:12px;padding:2px 8px;font-size:.75rem;">#</span>
+              <span class="chip chip-rep" style="position:absolute;bottom:6px;left:6px;background:var(--primary);color:#fff;border-radius:12px;padding:2px 8px;font-size:.75rem;display:none;">대표</span>
+              <button type="button" class="chip btn-delete" title="삭제" aria-label="삭제" style="position:absolute;top:6px;right:6px;background:rgba(0,0,0,.6);color:#fff;border:none;border-radius:50%;width:26px;height:26px;cursor:pointer;font-size:.8rem;display:flex;align-items:center;justify-content:center;">&times;</button>
+              <button type="button" class="chip btn-cover" title="표지로 지정" aria-label="표지로 지정" style="position:absolute;bottom:6px;right:6px;background:rgba(0,0,0,.6);color:#fff;border:none;border-radius:12px;padding:2px 8px;cursor:pointer;font-size:.75rem;">표지</button>
+              <img src="${ev.target.result}" alt="${file.name}"
+                   data-lightbox data-lightbox-group="listing-new" data-lightbox-src="${ev.target.result}"
+                   style="display:block;width:100%;height:120px;object-fit:cover;">
+            `;
+            preview.appendChild(div);
+            bindPreviewDragHandlers(div);
+            bindThumbButtons(div);
+            renderBadges();
+          };
+          reader.readAsDataURL(file);
+        }
+        fileInput.files = dt.files;
+      }
+
+      function bindThumbButtons(container){
+        const delBtn = container.querySelector('.btn-delete');
+        const coverBtn = container.querySelector('.btn-cover');
+        if(delBtn){
+          delBtn.addEventListener('click', (e)=>{
+            e.stopPropagation();
+            if(container.dataset.new === '1'){
+              const name = container.dataset.filename;
+              const temp = new DataTransfer();
+              Array.from(dt.files).forEach(f => { if(f.name !== name) temp.items.add(f); });
+              while(dt.items.length) dt.items.remove(0);
+              Array.from(temp.files).forEach(f => dt.items.add(f));
+              fileInput.files = dt.files;
+              container.remove();
+              renderBadges();
+            } else {
+              const id = container.dataset.id;
+              const ids = (delInput.value ? delInput.value.split(',') : []).filter(Boolean);
+              if(!ids.includes(String(id))) ids.push(String(id));
+              delInput.value = ids.join(',');
+              container.remove();
+              renderBadges();
+            }
+          });
+        }
+        if(coverBtn){
+          coverBtn.addEventListener('click', (e)=>{
+            e.stopPropagation();
+            const parent = container.parentElement;
+            if(!parent) return;
+            parent.insertBefore(container, parent.firstChild);
+            if(parent.id === 'existingImages') updateExistingOrder();
+            else if(parent.id === 'preview') rebuildDataTransferFromPreview();
+            renderBadges();
+          });
+        }
+      }
+
+      function bindPreviewDragHandlers(el){
+        el.addEventListener('dragstart', ()=>{ el.classList.add('dragging'); });
+        el.addEventListener('dragend', ()=>{ el.classList.remove('dragging'); renderBadges(); });
+        preview.addEventListener('dragover', (e)=>{
+          e.preventDefault();
+          const dragging = preview.querySelector('.thumb.dragging');
+          if(!dragging) return;
+          const after = getDragAfterElement(preview, e.clientY, e.clientX);
+          if(after == null) preview.appendChild(dragging); else preview.insertBefore(dragging, after.nextSibling);
+        });
+        preview.addEventListener('drop', (e)=>{ e.preventDefault(); rebuildDataTransferFromPreview(); renderBadges(); });
+        bindThumbButtons(el);
+      }
+
+      function getDragAfterElement(container, y, x){
+        const els = [...container.querySelectorAll('.thumb:not(.dragging)')];
+        return els.reduce((closest, child) => {
+          const box = child.getBoundingClientRect();
+          const offset = y - (box.top + box.height / 2);
+          if (offset >= 0 && offset < closest.offset) return { offset, element: child };
+          else return closest;
+        }, { offset: Number.POSITIVE_INFINITY }).element || null;
+      }
+
+      function rebuildDataTransferFromPreview(){
+        const current = new DataTransfer();
+        const orderNames = Array.from(preview.querySelectorAll('.thumb[data-new="1"]')).map(div => div.dataset.filename);
+        const filesArr = Array.from(dt.files);
+        orderNames.forEach(name => {
+          const f = filesArr.find(ff => ff.name === name);
+          if(f) current.items.add(f);
+        });
+        while(dt.items.length) dt.items.remove(0);
+        Array.from(current.files).forEach(f => dt.items.add(f));
+        fileInput.files = dt.files;
+      }
+
+      const container = document.getElementById('existingImages');
+      if(container){
+        container.addEventListener('dragstart', (e)=>{
+          const t = e.target.closest('.thumb');
+          if(!t) return; t.classList.add('dragging');
+        });
+        container.addEventListener('dragend', (e)=>{
+          const t = e.target.closest('.thumb');
+          if(!t) return; t.classList.remove('dragging'); renderBadges();
+        });
+        container.addEventListener('dragover', (e)=>{
+          e.preventDefault();
+          const dragging = container.querySelector('.thumb.dragging');
+          if(!dragging) return;
+          const after = getDragAfterElement(container, e.clientY, e.clientX);
+          if(after == null) container.appendChild(dragging); else container.insertBefore(dragging, after.nextSibling);
+        });
+        container.addEventListener('drop', (e)=>{ e.preventDefault(); updateExistingOrder(); renderBadges(); });
+        container.querySelectorAll('.thumb').forEach(bindThumbButtons);
+        renderBadges();
+      }
+
+      function updateExistingOrder(){
+        if(!container) return;
+        const ids = Array.from(container.querySelectorAll('.thumb')).map(t => t.dataset.id);
+        fetch(`/listings/{{ listing.id }}/images/reorder`, {
+          method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ order: ids })
+        });
+      }
+
+      function renderBadges(){
+        const numberize = parent => {
+          const thumbs = parent ? parent.querySelectorAll('.thumb') : [];
+          thumbs.forEach((t, idx)=>{
+            const num = t.querySelector('.chip-num');
+            const rep = t.querySelector('.chip-rep');
+            if(num) num.textContent = idx+1;
+            if(rep) rep.style.display = (idx===0 ? 'inline-block' : 'none');
+          });
+        };
+        numberize(document.getElementById('existingImages'));
+        numberize(document.getElementById('preview'));
+      }
+
+      form.addEventListener('submit', () => {
+        rebuildDataTransferFromPreview();
+        fileInput.files = dt.files;
+      });
+    });
+    </script>
+  </fieldset>
+
+  <div class="actions">
+    <button type="submit" class="btn btn-primary" style="padding:13px 28px; font-size:1rem;">{{ '수정 저장' if listing else '등록' }}</button>
+    <a class="ghost" href="{{ url_for('listings') }}">취소</a>
+  </div>
+</form>
+{% endblock %}

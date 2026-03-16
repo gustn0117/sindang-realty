@@ -1,0 +1,283 @@
+{% extends "base.html" %}
+{% block content %}
+{% if listing is defined and l is not defined %}{% set l = listing %}{% endif %}
+<style>
+  .info-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin: 16px 0; }
+  .info-card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; }
+  .info-card h3 { margin: 0 0 10px; font-size: .95rem; color: var(--text); }
+  .info-card p { margin: 3px 0; font-size: .88rem; color: var(--text-secondary); }
+  .info-card strong { color: var(--text); }
+
+  .detail-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+
+  .lb-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.88); display: none; align-items: center; justify-content: center; z-index: 2000; backdrop-filter: blur(6px); }
+  .lb-overlay.open { display: flex; }
+  .lb-stage { position: relative; max-width: 90vw; max-height: 88vh; }
+  .lb-stage img { max-width: 100%; max-height: 88vh; display: block; border-radius: 10px; box-shadow: 0 20px 60px rgba(0,0,0,.5); }
+  .lb-prev, .lb-next, .lb-close {
+    position: absolute; display: flex; align-items: center; justify-content: center;
+    width: 44px; height: 44px; border-radius: 50%; border: 1px solid rgba(255,255,255,.25);
+    background: rgba(0,0,0,.4); color: #fff; cursor: pointer; user-select: none;
+    transition: all var(--transition); backdrop-filter: blur(4px);
+  }
+  .lb-prev { left: -58px; top: 50%; transform: translateY(-50%); }
+  .lb-next { right: -58px; top: 50%; transform: translateY(-50%); }
+  .lb-close { right: 0; top: -52px; }
+  .lb-prev:hover, .lb-next:hover, .lb-close:hover { background: rgba(255,255,255,.15); }
+
+  @media (max-width: 768px) {
+    .info-grid { grid-template-columns: 1fr; gap: 10px; }
+    .info-card { padding: 14px; }
+    .info-card[style*="grid-column"] { grid-column: auto !important; }
+    .detail-actions { flex-direction: column; gap: 6px; }
+    .detail-actions a, .detail-actions button { width: 100%; text-align: center; }
+    .detail-actions form { width: 100%; }
+    .detail-actions form button { width: 100%; }
+    .gallery { grid-template-columns: repeat(2, 1fr) !important; gap: 6px !important; }
+    .gallery img { height: auto !important; aspect-ratio: 4/3; }
+    #map { height: 250px !important; min-height: 200px !important; }
+    .lb-prev { left: 6px; width: 36px; height: 36px; }
+    .lb-next { right: 6px; width: 36px; height: 36px; }
+    .lb-close { top: -42px; width: 36px; height: 36px; }
+  }
+  @media (max-width: 480px) {
+    .gallery { grid-template-columns: 1fr !important; }
+    #map { height: 200px !important; }
+  }
+</style>
+
+<article class="detail">
+  {% if is_public %}
+  <div class="card" style="background:var(--primary-light); border-color:var(--primary); padding:12px 16px; margin-bottom:16px; display:flex; align-items:center; gap:8px;">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+    <span style="font-size:.9rem; color:var(--primary); font-weight:500;">로그인 없이 열람 중: 이 링크로 공유된 매물만 볼 수 있습니다.</span>
+  </div>
+  {% endif %}
+
+  {% if l.hidden %}
+  <div class="card" style="background:#fef2f2; border-color:#fecaca; padding:12px 16px; margin-bottom:16px; display:flex; justify-content:space-between; align-items:center;">
+    <span style="color:#991b1b; font-weight:500; font-size:.9rem;">이 매물은 현재 <strong>숨김 상태</strong>입니다.</span>
+    <form action="{{ url_for('toggle_hidden', listing_id=l.id) }}" method="post" style="margin:0;">
+      <button type="submit" class="btn btn-danger" style="padding:6px 14px; font-size:.85rem;">숨김 해제</button>
+    </form>
+  </div>
+  {% endif %}
+
+  <!-- Header -->
+  <div class="card" style="margin-bottom:16px;">
+    <header class="detail-head" style="flex-direction:column; gap:12px;">
+      <div>
+        <h1 style="margin:0 0 8px;">{{ (l.label if l is defined and l.label) or (l.display_name if l is defined and l.display_name) or (l.title if l is defined and l.title) or '' }}</h1>
+        <div class="meta" style="gap:12px;">
+          <span class="badge" style="font-size:.85rem;">{{ l.category }} &middot; {{ l.trade_type }}</span>
+          <span id="addr-text" style="color:var(--text-secondary);">{{ l.jibun_addr or l.road_addr }}</span>
+          <span style="color:var(--text-secondary);">구조: {{ l.structure or '-' }}</span>
+          <span class="badge {{ l.status }}" style="text-transform:capitalize;">{{ l.status }}</span>
+        </div>
+      </div>
+      <div class="detail-actions">
+        <a href="{{ url_for('listing_edit', listing_id=l.id) }}" class="btn btn-outline">수정</a>
+        <button type="button" id="copy-url-btn" class="btn btn-outline">URL 복사</button>
+        <a href="#" id="bulk-download-btn" class="btn btn-outline">사진 다운로드</a>
+        <form action="{{ url_for('listing_delete', listing_id=l.id) }}" method="post" onsubmit="return confirm('삭제할까요?')" style="display:inline; margin:0;">
+          <button type="submit" class="btn btn-danger">삭제</button>
+        </form>
+        {% if current_user.role=='admin' and l.status != 'approved' %}
+        <form action="{{ url_for('approve', listing_id=l.id) }}" method="post" style="display:inline; margin:0;">
+          <button type="submit" class="btn btn-success">승인</button>
+        </form>
+        {% endif %}
+        {% if current_user.role=='admin' and l.status != 'rejected' %}
+        <form action="{{ url_for('reject', listing_id=l.id) }}" method="post" style="display:inline; margin:0;">
+          <button type="submit" class="btn btn-danger">반려</button>
+        </form>
+        {% endif %}
+      </div>
+    </header>
+  </div>
+
+  <!-- Gallery -->
+  {% if l is defined and l.images %}
+  <div class="gallery" style="display:grid; grid-template-columns:repeat(3, 1fr); gap:10px; margin-bottom:20px;">
+    {% for img in l.images %}
+      <a href="{{ url_for('uploaded_file', filename=img.filename) }}"
+         class="lb-item"
+         data-index="{{ loop.index0 }}"
+         data-caption="{{ img.filename.split('/')[-1] }}"
+         data-download-url="{{ url_for('download_image_jpg', listing_id=l.id, image_id=img.id) }}"
+         style="border-radius:var(--radius); overflow:hidden; border:1px solid var(--border);">
+        <img src="{{ url_for('uploaded_file', filename=img.filename) }}"
+             loading="lazy" decoding="async"
+             alt="{{ (l.label if l is defined and l.label) or (l.display_name if l is defined and l.display_name) or (l.title if l is defined and l.title) or '' }}"
+             style="width:100%; height:220px; object-fit:cover; display:block; cursor:pointer; transition:transform .3s ease;">
+      </a>
+    {% endfor %}
+  </div>
+
+  <div class="lb-overlay" id="lb">
+    <div class="lb-stage">
+      <img id="lb-img" src="" alt="preview">
+      <button class="lb-prev" type="button" aria-label="이전">&lsaquo;</button>
+      <button class="lb-next" type="button" aria-label="다음">&rsaquo;</button>
+      <button class="lb-close" type="button" aria-label="닫기">&times;</button>
+    </div>
+  </div>
+
+  <script>
+    (function(){
+      const items = Array.from(document.querySelectorAll('.lb-item'));
+      if(!items.length) return;
+      const lb = document.getElementById('lb');
+      const img = document.getElementById('lb-img');
+      const caption = document.createElement('div');
+      caption.style.cssText = 'color:#fff; margin-top:10px; text-align:center; font-size:.85rem; opacity:.8;';
+      lb.querySelector('.lb-stage').appendChild(caption);
+      const prev = lb.querySelector('.lb-prev');
+      const next = lb.querySelector('.lb-next');
+      const close = lb.querySelector('.lb-close');
+      const urls = items.map(a => a.getAttribute('href'));
+      let idx = 0;
+
+      function open(i){ idx = i; img.src = urls[idx]; caption.textContent = items[idx].getAttribute('data-caption') || ''; lb.classList.add('open'); document.body.style.overflow='hidden'; }
+      function move(d){ idx = (idx + d + urls.length) % urls.length; img.src = urls[idx]; caption.textContent = items[idx].getAttribute('data-caption') || ''; }
+      function hide(){ lb.classList.remove('open'); document.body.style.overflow=''; }
+
+      items.forEach((a,i)=>{ a.addEventListener('click', e=>{ e.preventDefault(); open(i); }); });
+      prev.addEventListener('click', ()=>move(-1));
+      next.addEventListener('click', ()=>move(1));
+      close.addEventListener('click', hide);
+      lb.addEventListener('click', (e)=>{ if(e.target === lb) hide(); });
+      document.addEventListener('keydown', (e)=>{
+        if(!lb.classList.contains('open')) return;
+        if(e.key==='Escape') hide();
+        if(e.key==='ArrowLeft') move(-1);
+        if(e.key==='ArrowRight') move(1);
+      });
+    })();
+  </script>
+  {% endif %}
+
+  <!-- Info Cards -->
+  <div class="info-grid">
+    <div class="info-card">
+      <h3>가격 정보</h3>
+      <p>거래유형: <strong>{{ l.trade_type or '-' }}</strong></p>
+      {% if l.trade_type == '월세' %}
+        <p>보증금/월세: <strong>{{ '{:,}'.format(l.deposit or 0) }} / {{ '{:,}'.format(l.rent or 0) }} 만원</strong></p>
+      {% elif l.trade_type == '전세' %}
+        <p>전세: <strong>{{ '{:,}'.format(l.deposit or 0) }} 만원</strong></p>
+      {% elif l.trade_type == '매매' %}
+        <p>매매가: <strong>{{ '{:,}'.format(l.sale_price or 0) }} 만원</strong></p>
+      {% else %}
+        <p>가격정보 없음</p>
+      {% endif %}
+      {% if l.maintenance_fee %}
+        <p>관리비: <strong>{{ '{:,}'.format(l.maintenance_fee or 0) }} 만원</strong></p>
+      {% endif %}
+    </div>
+
+    <div class="info-card" style="grid-column: span 2;">
+      <h3>설명</h3>
+      <p style="white-space:pre-wrap;">{{ l.description or '—' }}</p>
+      {% if l.features %}
+      <h4 style="margin-top:12px;">특징</h4>
+      <p>{{ l.features }}</p>
+      {% endif %}
+      {% if l.options %}
+      <h4 style="margin-top:12px;">옵션</h4>
+      <p>{{ l.options }}</p>
+      {% endif %}
+      {% if l.memo %}
+      <h4 style="margin-top:12px;">내부 메모</h4>
+      <p style="color:var(--muted); font-style:italic;">{{ l.memo }}</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Map -->
+  <div class="card" style="margin-top:16px;">
+    <h3 style="margin:0 0 12px;">지도</h3>
+    <div id="map" style="height:50vh; min-height:300px; border:1px solid var(--border); border-radius:var(--radius); overflow:hidden;"></div>
+    {% if l.lat and l.lng and map_key %}
+    <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey={{ map_key }}&libraries=services"></script>
+    <script>
+      (function(){
+        var map = new kakao.maps.Map(document.getElementById('map'), {
+          center: new kakao.maps.LatLng({{ l.lat }}, {{ l.lng }}),
+          level: 4
+        });
+        var marker = new kakao.maps.Marker({ position: new kakao.maps.LatLng({{ l.lat }}, {{ l.lng }}) });
+        marker.setMap(map);
+        var infowindow = new kakao.maps.InfoWindow({
+          content: '<div style="padding:8px 10px; font-size:13px; line-height:1.4;">{{ (l.jibun_addr or l.road_addr)|e }}</div>'
+        });
+        infowindow.open(map, marker);
+
+        var jibunAddr = {{ (l.jibun_addr or '')|tojson }};
+        var hasCoords = {{ (l.lat is not none and l.lng is not none)|lower }};
+        if (!jibunAddr && hasCoords) {
+          var geocoder = new kakao.maps.services.Geocoder();
+          geocoder.coord2Address({{ l.lng }}, {{ l.lat }}, function(result, status){
+            if (status === kakao.maps.services.Status.OK && result && result.length) {
+              var addr = (result[0].address && result[0].address.address_name) || (result[0].road_address && result[0].road_address.address_name) || '';
+              if (addr) {
+                var node = document.getElementById('addr-text');
+                if (node) node.textContent = addr;
+                infowindow.setContent('<div style="padding:8px 10px; font-size:13px; line-height:1.4;">' + addr.replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</div>');
+              }
+            }
+          });
+        }
+      })();
+    </script>
+    {% else %}
+      <p class="empty" style="padding:20px;">좌표 또는 카카오맵 키가 없어 지도를 표시할 수 없습니다.</p>
+    {% endif %}
+  </div>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', function(){
+      var btn = document.getElementById('copy-url-btn');
+      if (btn) {
+        function flashLabel(text){
+          var original = btn.textContent;
+          btn.textContent = text;
+          btn.disabled = true;
+          setTimeout(function(){ btn.textContent = original; btn.disabled = false; }, 1200);
+        }
+        btn.addEventListener('click', function(){
+          var url = window.location.href;
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(url).then(function(){ flashLabel('복사 완료'); }).catch(function(){ flashLabel('복사 실패'); });
+          } else {
+            var temp = document.createElement('textarea');
+            temp.value = url; temp.style.position = 'fixed'; temp.style.left = '-9999px';
+            document.body.appendChild(temp); temp.select();
+            try { document.execCommand('copy'); flashLabel('복사 완료'); } catch(e) { flashLabel('복사 실패'); }
+            document.body.removeChild(temp);
+          }
+        });
+      }
+
+      var bulkBtn = document.getElementById('bulk-download-btn');
+      if (bulkBtn) {
+        bulkBtn.addEventListener('click', function(e){
+          e.preventDefault();
+          var nodes = document.querySelectorAll('[data-download-url]');
+          var urls = Array.prototype.map.call(nodes, function(el){ return el.getAttribute('data-download-url'); }).filter(function(u){ return !!u; });
+          if (!urls.length) { alert('다운로드할 이미지가 없습니다.'); return; }
+          if (!confirm('이 매물의 모든 이미지를 다운로드할까요?')) return;
+          var idx = 0, delay = 600;
+          function triggerNext(){
+            if (idx >= urls.length) return;
+            var a = document.createElement('a'); a.href = urls[idx]; a.download = ''; a.style.display = 'none';
+            document.body.appendChild(a); a.click(); document.body.removeChild(a);
+            idx += 1; setTimeout(triggerNext, delay);
+          }
+          triggerNext();
+        });
+      }
+    });
+  </script>
+</article>
+{% endblock %}

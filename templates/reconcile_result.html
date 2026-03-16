@@ -1,0 +1,208 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+  @media (max-width: 768px) {
+    .reconcile-summary { flex-direction: column !important; align-items: flex-start !important; gap: 10px !important; }
+    .reconcile-badges { width: 100%; justify-content: flex-start !important; }
+    .reconcile-badges .btn { width: 100%; text-align: center; }
+    .sticky-actions { flex-direction: column !important; gap: 8px !important; }
+    .sticky-actions .row-center { width: 100%; }
+    .sticky-actions .btn { width: 100%; }
+  }
+</style>
+
+<!-- Summary Header -->
+<div class="card" style="padding:16px 20px; margin-bottom:12px;">
+  <div class="reconcile-summary row-center" style="justify-content:space-between; flex-wrap:wrap; gap:10px;">
+    <div>
+      <h2 style="margin:0; font-size:1.15rem;">PDF 동기화 결과</h2>
+      <p style="margin:2px 0 0; color:var(--text-secondary); font-size:.82rem;">파싱된 항목: <strong style="color:var(--text);">{{ parsed_count }}</strong>건</p>
+    </div>
+    <div class="reconcile-badges row-center" style="gap:6px; flex-wrap:wrap;">
+      <span class="badge ok">유지 <strong>{{ stay_rows|length }}</strong></span>
+      <span class="badge ok">복원 <strong>{{ restored_rows|length }}</strong></span>
+      <span class="badge">가격변경 <strong>{{ (changed_price|length) if changed_price is defined else 0 }}</strong></span>
+      <span class="badge warn">숨김 후보 <strong id="delCountTop">{{ del_rows|length }}</strong></span>
+      <a href="{{ url_for('reconcile_upload') }}" class="btn btn-outline" style="font-size:.82rem; padding:7px 12px;">다른 PDF 업로드</a>
+    </div>
+  </div>
+</div>
+
+<!-- 1. Stay -->
+<div class="card" style="margin-bottom:16px;">
+  <h3 style="margin:0 0 14px; display:flex; align-items:center; gap:8px;">
+    <span class="badge ok" style="font-size:.75rem;">1</span> 유지(일치) 매물
+  </h3>
+  {% if stay_rows %}
+    <div class="table-wrapper">
+      <table class="table">
+        <thead>
+          <tr><th>ID</th><th>제목</th><th>동</th><th>호</th><th>주소</th><th>유형</th><th>카테고리</th><th>가격</th></tr>
+        </thead>
+        <tbody>
+          {% for r in stay_rows %}
+          <tr>
+            <td>{{ r.id }}</td>
+            <td><a href="{{ url_for('listing_detail', listing_id=r.id) }}" target="_blank">{{ r.title }}</a></td>
+            <td>{{ r.dong }}</td><td>{{ r.ho }}</td><td>{{ r.addr }}</td>
+            <td>{{ r.trade_type }}</td><td>{{ r.category }}</td>
+            <td class="price-text">{{ r.price }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <p class="empty">일치하는 매물이 없습니다.</p>
+  {% endif %}
+</div>
+
+<!-- 2. Delete Candidates -->
+<form method="post" action="{{ url_for('reconcile_delete') }}">
+  <div class="card" style="padding:0; margin-bottom:16px;">
+    <div class="sticky-actions" style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; border-bottom:1px solid var(--border); border-radius:var(--radius) var(--radius) 0 0;">
+      <div class="row-center" style="gap:10px;">
+        <label style="user-select:none; display:flex; align-items:center; gap:6px; cursor:pointer; font-size:.9rem;">
+          <input type="checkbox" id="toggleAll" {% if del_rows %}checked{% endif %} style="accent-color:var(--primary);"> 전체 선택/해제
+        </label>
+        <span class="badge warn">선택 <strong id="selCount">0</strong></span>
+        <span class="badge">총 <strong id="delCount">{{ del_rows|length }}</strong></span>
+      </div>
+      <button type="submit" class="btn btn-danger" style="min-width:140px;" {% if not del_rows %}disabled{% endif %}
+        onclick="return confirm('선택한 매물을 숨김 처리할까요?');">선택 숨김</button>
+    </div>
+
+    <div style="padding:20px;">
+      <h3 style="margin:0 0 14px; display:flex; align-items:center; gap:8px;">
+        <span class="badge warn" style="font-size:.75rem;">2</span> 숨김 후보 (PDF에 없음)
+      </h3>
+      {% if del_rows %}
+        <div class="table-wrapper">
+          <table class="table">
+            <thead>
+              <tr><th style="width:44px;"></th><th>ID</th><th>제목</th><th>동</th><th>호</th><th>주소</th><th>유형</th><th>카테고리</th><th>가격</th></tr>
+            </thead>
+            <tbody>
+              {% for r in del_rows %}
+              <tr>
+                <td><input type="checkbox" name="delete_ids" value="{{ r.id }}" class="chk" checked style="accent-color:var(--primary);"></td>
+                <td>{{ r.id }}</td>
+                <td><a href="{{ url_for('listing_detail', listing_id=r.id) }}" target="_blank">{{ r.title }}</a></td>
+                <td>{{ r.dong }}</td><td>{{ r.ho }}</td><td>{{ r.addr }}</td>
+                <td>{{ r.trade_type }}</td><td>{{ r.category }}</td>
+                <td class="price-text">{{ r.price }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <p class="empty">숨김 후보가 없습니다.</p>
+      {% endif %}
+    </div>
+  </div>
+</form>
+
+<!-- 3. Restored -->
+<div class="card" style="margin-bottom:16px;">
+  <h3 style="margin:0 0 14px; display:flex; align-items:center; gap:8px;">
+    <span class="badge ok" style="font-size:.75rem;">3</span> 복원된 매물 (숨김 &rarr; 유지)
+  </h3>
+  {% if restored_rows %}
+    <div class="table-wrapper">
+      <table class="table">
+        <thead>
+          <tr><th>ID</th><th>제목</th><th>동</th><th>호</th><th>주소</th><th>유형</th><th>카테고리</th><th>가격</th></tr>
+        </thead>
+        <tbody>
+          {% for r in restored_rows %}
+          <tr>
+            <td>{{ r.id }}</td>
+            <td><a href="{{ url_for('listing_detail', listing_id=r.id) }}" target="_blank">{{ r.title }}</a></td>
+            <td>{{ r.dong }}</td><td>{{ r.ho }}</td><td>{{ r.addr }}</td>
+            <td>{{ r.trade_type }}</td><td>{{ r.category }}</td>
+            <td class="price-text">{{ r.price }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <p class="empty">이번 동기화로 복원된 매물이 없습니다.</p>
+  {% endif %}
+</div>
+
+<!-- 4. Price Changes -->
+<div class="card">
+  <h3 style="margin:0 0 14px; display:flex; align-items:center; gap:8px;">
+    <span class="badge" style="font-size:.75rem;">4</span> 가격 변경된 매물
+  </h3>
+  {% if changed_price and changed_price|length > 0 %}
+    <div class="table-wrapper">
+      <table class="table">
+        <thead>
+          <tr><th>ID</th><th>제목</th><th>동</th><th>호</th><th>주소</th><th>보증금 (전&rarr;후)</th><th>월세 (전&rarr;후)</th><th>관리비 (전&rarr;후)</th></tr>
+        </thead>
+        <tbody>
+          {% for r in changed_price %}
+          <tr>
+            <td>{{ r.id }}</td>
+            <td><a href="{{ url_for('listing_detail', listing_id=r.id) }}" target="_blank">{{ r.title }}</a></td>
+            <td>{{ r.dong }}</td><td>{{ r.ho }}</td><td>{{ r.addr }}</td>
+            <td><span class="num">{{ r.old_deposit if r.old_deposit is not none else '-' }}</span> &rarr; <strong><span class="num">{{ r.new_deposit if r.new_deposit is not none else '-' }}</span></strong></td>
+            <td><span class="num">{{ r.old_rent if r.old_rent is not none else '-' }}</span> &rarr; <strong><span class="num">{{ r.new_rent if r.new_rent is not none else '-' }}</span></strong></td>
+            <td><span class="num">{{ r.old_mfee if r.old_mfee is not none else '-' }}</span> &rarr; <strong><span class="num">{{ r.new_mfee if r.new_mfee is not none else '-' }}</span></strong></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <p class="empty">가격이 변경된 매물이 없습니다.</p>
+  {% endif %}
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function(){
+  var toggle = document.getElementById('toggleAll');
+  var checks = Array.from(document.querySelectorAll('.chk'));
+  var selCount = document.getElementById('selCount');
+  var delCount = document.getElementById('delCount');
+  var delCountTop = document.getElementById('delCountTop');
+
+  function refreshCount(){
+    var n = checks.filter(function(c){ return c.checked; }).length;
+    if (selCount) selCount.textContent = n;
+  }
+  refreshCount();
+
+  if (toggle) {
+    toggle.addEventListener('change', function(){
+      checks.forEach(function(c){ c.checked = toggle.checked; });
+      refreshCount();
+    });
+  }
+  checks.forEach(function(c){ c.addEventListener('change', refreshCount); });
+
+  if (delCount && delCountTop) delCountTop.textContent = delCount.textContent;
+
+  document.querySelectorAll('.price-text').forEach(function(td){
+    var raw = td.textContent || '';
+    var formatted = raw.replace(/\d+/g, function(num){
+      return num.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    });
+    td.textContent = formatted;
+  });
+
+  document.querySelectorAll('span.num').forEach(function(span){
+    var t = (span.textContent || '').trim();
+    if (!t || t === '-') return;
+    var s = t.replace(/,/g,'');
+    if (/^\d+$/.test(s)){
+      span.textContent = s.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    }
+  });
+});
+</script>
+
+{% endblock %}

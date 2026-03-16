@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel small">
+  <div style="text-align:center; margin-bottom:24px;">
+    <div style="width:56px; height:56px; border-radius:16px; background:var(--primary-light); display:inline-flex; align-items:center; justify-content:center; font-size:1.5rem; margin-bottom:12px;">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+    </div>
+    <h1 style="margin:0;">로그인</h1>
+    <p style="margin-top:8px; color:var(--muted); font-size:.9rem;">신당 내부 매물 시스템에 로그인하세요.</p>
+  </div>
+  <form method="post">
+    <label>아이디
+      <input name="email" type="text" required placeholder="sindang1234 또는 sd1234" autocomplete="username">
+    </label>
+    <label>비밀번호
+      <input name="password" type="password" required placeholder="비밀번호를 입력하세요" autocomplete="current-password">
+    </label>
+    <button type="submit">로그인</button>
+  </form>
+  <p class="hint" style="text-align:center;">
+    기본 계정: 관리자 <code>sindang1234 / 1234</code>,
+    직원 <code>sd1234 / 1234</code>
+  </p>
+</section>
+{% endblock %}

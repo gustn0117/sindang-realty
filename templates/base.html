@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>신당 – 내부 매물 시스템</title>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v={{ STATIC_VERSION }}">
+  <meta name="color-scheme" content="light dark">
+</head>
+<body>
+
+<header class="nav">
+  <a class="logo" href="{{ url_for('listings') }}">신당</a>
+  {% if current_user.is_authenticated %}
+  <nav id="mainNav">
+    <a href="{{ url_for('dashboard') }}" class="{% if request.endpoint == 'dashboard' %}active{% endif %}">대시보드</a>
+    <a href="{{ url_for('listings') }}" class="{% if request.endpoint == 'listings' %}active{% endif %}">매물목록</a>
+    <a href="{{ url_for('listing_new') }}" class="{% if request.endpoint == 'listing_new' %}active{% endif %}">매물등록</a>
+    <a href="{{ url_for('reconcile_upload') }}" class="{% if request.endpoint == 'reconcile_upload' %}active{% endif %}">PDF 동기화</a>
+    <span class="who">{{ current_user.name }}{% if current_user.role=='admin' %} (관리자){% endif %}</span>
+    <a class="btn btn-outline" href="{{ url_for('logout') }}" style="margin-left:4px; padding:6px 12px; font-size:.82rem;">로그아웃</a>
+  </nav>
+  {% endif %}
+</header>
+
+<main class="container">
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      <div class="flash-stack">
+        {% for cat, msg in messages %}
+          <div class="flash {{ cat }}">{{ msg }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+  {% endwith %}
+  {% block content %}{% endblock %}
+</main>
+
+<footer class="footer">
+  &copy; 2025 SINDANG Internal System
+</footer>
+
+<!-- Global Lightbox -->
+<div id="lightbox" class="lightbox" aria-hidden="true" style="display:none;">
+  <div class="lb-backdrop" data-lb-close></div>
+  <div class="lb-stage" role="dialog" aria-modal="true" aria-label="이미지 미리보기">
+    <button type="button" class="lb-btn lb-close" title="닫기" aria-label="닫기" data-lb-close>&times;</button>
+    <button type="button" class="lb-btn lb-prev" title="이전" aria-label="이전">&lsaquo;</button>
+    <img class="lb-image" alt="preview" />
+    <button type="button" class="lb-btn lb-next" title="다음" aria-label="다음">&rsaquo;</button>
+    <div class="lb-caption" aria-live="polite"></div>
+  </div>
+</div>
+
+<script>
+(function(){
+  const root = document.getElementById('lightbox');
+  if(!root) return;
+  const imgEl = root.querySelector('.lb-image');
+  const capEl = root.querySelector('.lb-caption');
+  const btnPrev = root.querySelector('.lb-prev');
+  const btnNext = root.querySelector('.lb-next');
+
+  let items = [];
+  let index = 0;
+  let keyHandler = null;
+
+  function show(i){
+    if(!items.length) return close();
+    index = (i + items.length) % items.length;
+    const it = items[index];
+    imgEl.src = it.src;
+    imgEl.alt = it.alt || '';
+    capEl.textContent = it.caption || it.alt || '';
+    document.documentElement.style.overflow = 'hidden';
+    root.style.display = 'block';
+    root.setAttribute('aria-hidden','false');
+    if(!keyHandler){
+      keyHandler = (e)=>{
+        if(e.key === 'Escape') close();
+        else if(e.key === 'ArrowLeft') prev();
+        else if(e.key === 'ArrowRight') next();
+      };
+      document.addEventListener('keydown', keyHandler);
+    }
+  }
+  function prev(){ show(index - 1); }
+  function next(){ show(index + 1); }
+  function close(){
+    root.style.display = 'none';
+    root.setAttribute('aria-hidden','true');
+    imgEl.removeAttribute('src');
+    document.documentElement.style.overflow = '';
+    if(keyHandler){ document.removeEventListener('keydown', keyHandler); keyHandler = null; }
+  }
+
+  window.openLightbox = function(list, startIdx){
+    try { items = (list || []).filter(Boolean); } catch(e) { items = []; }
+    if(!items.length) return;
+    show(Number.isInteger(startIdx) ? startIdx : 0);
+  };
+
+  document.addEventListener('click', function(e){
+    const trigger = e.target.closest('[data-lightbox]');
+    if(!trigger) return;
+    e.preventDefault();
+    const group = trigger.getAttribute('data-lightbox-group') || 'default';
+    const nodes = Array.from(document.querySelectorAll(`[data-lightbox][data-lightbox-group="${group}"]`));
+    const list = nodes.map(n => ({
+      src: n.getAttribute('data-lightbox-src') || n.getAttribute('href') || n.getAttribute('src'),
+      alt: n.getAttribute('alt') || '',
+      caption: n.getAttribute('data-caption') || ''
+    })).filter(x => !!x.src);
+    const start = Math.max(0, nodes.indexOf(trigger));
+    window.openLightbox(list, start);
+  });
+
+  document.addEventListener('click', function(e){
+    const img = e.target.closest('.gallery img');
+    if (!img) return;
+    const autoContainer = img.closest('[data-lightbox-auto]');
+    if (!autoContainer) return;
+    if (img.closest('[data-lightbox]')) return;
+    e.preventDefault();
+    const gallery = img.closest('.gallery');
+    const imgs = Array.from(gallery.querySelectorAll('img'));
+    const list = imgs.map(node => ({
+      src: node.getAttribute('data-lightbox-src') || node.currentSrc || node.src,
+      alt: node.getAttribute('alt') || ''
+    }));
+    const start = Math.max(0, imgs.indexOf(img));
+    window.openLightbox(list, start);
+  });
+
+  root.addEventListener('click', function(e){
+    if(e.target.hasAttribute('data-lb-close') || e.target.classList.contains('lb-backdrop')) close();
+  });
+  root.querySelector('.lb-close').addEventListener('click', close);
+  btnPrev.addEventListener('click', prev);
+  btnNext.addEventListener('click', next);
+})();
+</script>
+</body>
+</html>
