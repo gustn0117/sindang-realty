@@ -214,7 +214,7 @@
           <!-- Thumbnail -->
           {% if l.images and l.images|length > 0 %}
           <a href="{{ url_for('listing_detail', listing_id=l.id) }}" class="listing-thumb">
-            <img src="{{ url_for('uploaded_file', filename=l.images[0].filename) }}"
+            <img src="{{ url_for('uploaded_file', filename=l.images[0].filename) }}?v=2"
                  loading="lazy" decoding="async"
                  alt="{{ l.display_name or l.title }}">
           </a>
