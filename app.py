@@ -1,4 +1,6 @@
 import os
+import mimetypes
+mimetypes.add_type("image/webp", ".webp")
 from datetime import datetime
 from flask import (
     Flask, render_template, render_template_string, request, redirect, url_for, flash, send_from_directory, jsonify, send_file
@@ -1404,8 +1406,6 @@ def approve_bulk():
 # 이미지 제공
 @app.route("/uploads/<path:filename>")
 def uploaded_file(filename):
-    import mimetypes
-    mimetypes.add_type("image/webp", ".webp")
     return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
 
 
