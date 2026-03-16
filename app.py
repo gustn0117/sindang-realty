@@ -45,6 +45,20 @@ login_manager = LoginManager(app)
 login_manager.login_view = "login"
 login_manager.login_message_category = "warning"
 
+# Auto-create tables & default users on startup (for gunicorn)
+with app.app_context():
+    db.create_all()
+    if not User.query.filter_by(email="sindang1234").first():
+        admin = User(email="sindang1234", name="관리자", role="admin")
+        admin.set_password("1234")
+        db.session.add(admin)
+        db.session.commit()
+    if not User.query.filter_by(email="sd1234").first():
+        u = User(email="sd1234", name="직원", role="staff")
+        u.set_password("1234")
+        db.session.add(u)
+        db.session.commit()
+
 @login_manager.user_loader
 def load_user(user_id):
     return db.session.get(User, int(user_id))
