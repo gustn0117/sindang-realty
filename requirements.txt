@@ -4,3 +4,4 @@ Flask-Login==0.6.3
 python-dotenv==1.0.1
 Werkzeug==3.0.4
 pdfminer.six==20240706
+requests==2.32.3
