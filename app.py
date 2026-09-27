@@ -13,9 +13,10 @@ from dotenv import load_dotenv
 import re
 from io import BytesIO
 try:
-    from pdfminer.high_level import extract_text
+    from pdfminer.high_level import extract_text, extract_pages
+    from pdfminer.layout import LTTextLine
 except Exception:
-    extract_text = None  # pdfminer.six가 설치되지 않은 경우 대비
+    extract_text = extract_pages = LTTextLine = None  # pdfminer.six가 설치되지 않은 경우 대비
 
 # Safe import for Pillow (treat as module, not class)
 try:
@@ -709,7 +710,139 @@ def bulk_set_hidden():
 
 # --- PDF 파싱 & 매물 동기화 ---
 def parse_pdf_for_units(pdf_bytes: bytes):
-    """PDF에서 (동, 지번, 호, 가격) 항목을 추출한다.
+    """온하우스 PDF에서 매물별 (동, 지번, 호, 보증금, 월세, 관리비)를 추출한다.
+
+    표 양식(머리글에 '호/준/면'이 있는 출력물)이면 글자 좌표로 읽고,
+    아니면 예전 텍스트 양식 파서로 읽는다. 반환 형식은 두 경우 모두 같다.
+    """
+    if extract_text is None:
+        raise RuntimeError("pdfminer.six 미설치: `pip install pdfminer.six` 필요")
+
+    rows = _parse_onhouse_table_pdf(pdf_bytes)
+    if rows is None:
+        rows = _parse_legacy_text_pdf(pdf_bytes)
+    return rows
+
+
+_TABLE_HEADERS = ("건물명/주소", "매물", "호/준/면", "금액", "방볼때/비고/옵션")
+_P_TABLE_BUILT = re.compile(r"^(\d{4}\.\d{2}|-)$")  # 준공 (예: 2020.01, 모르면 -)
+_P_TABLE_ADDR = re.compile(r"^(?P<dong>[가-힣]+동)\s+(?P<jibeon>\d+(?:-\d+)?)$")
+_P_TABLE_PRICE = re.compile(
+    r"^(?P<sale>매)?(?P<deposit>\d[\d,]*)"
+    r"(?:\s*/\s*(?P<rent>\d[\d,]*))?(?:\s*/\s*(?P<mfee>\d[\d,]*))?(?=\s|$)"
+)
+
+
+def _iter_text_lines(layout):
+    """pdfminer 레이아웃에서 텍스트 줄(LTTextLine)을 모두 꺼낸다."""
+    for obj in layout:
+        if isinstance(obj, LTTextLine):
+            yield obj
+        elif hasattr(obj, "__iter__"):  # 텍스트 박스, 그림 등 묶음
+            yield from _iter_text_lines(obj)
+
+
+def _parse_onhouse_table_pdf(pdf_bytes: bytes):
+    """온하우스 표 양식 PDF를 글자 좌표로 파싱한다. 표 머리글이 없는 PDF면 None.
+
+    이 양식은 텍스트만 뽑으면 열 단위(매물종류 전부 → 건물명/주소 전부 → ...)로 나오고,
+    같은 건물의 두 번째 호실은 건물명·주소 칸이 비어 있어 순서대로 짝지을 수 없다.
+    그래서 머리글 위치로 열 경계를 잡고, 매물 한 건(3줄)을 블록으로 묶는다.
+
+        건물명         | 1R  | 305/3F   | 1,000/70 콜 | ...
+        신당동 1793-2  | 방1 | 2020.01  |             | ...
+        서당로7길 56   |     | 0㎡ / 0P |             | ...
+
+    - 호/준/면 열에서 준공(2020.01, -)·면적(0㎡ / 0P)이 아닌 칸이 블록의 첫 줄이다.
+      호수 칸은 직접 입력이라 '505(옥탑)', '305 0109117/3F'처럼 형식이 제각각이다.
+    - 호수는 '/' 앞의 첫 숫자만 쓴다 (4층/4F → 4). DB와도 숫자만 비교한다.
+    - 건물명·주소가 모두 빈 블록은 바로 위 매물과 같은 건물이므로 그 주소를 이어받는다.
+      건물명만 있고 주소가 없으면 추측하지 않고 건너뛴다.
+    - 금액: 300/45, 300/30/10(관리비), 14,000(전세: 보증금만), 매14,500(매매: 가격 갱신 안 함)
+    """
+    found_table = False
+    results = []
+    last_addr = None  # 건물명·주소가 빈 블록이 이어받을 (동, 지번)
+
+    for page_no, page in enumerate(extract_pages(BytesIO(pdf_bytes)), start=1):
+        items = []
+        for ln in _iter_text_lines(page):
+            text = ln.get_text().strip()
+            if text:
+                items.append({"text": text, "x0": ln.x0, "cx": (ln.x0 + ln.x1) / 2, "cy": (ln.y0 + ln.y1) / 2})
+
+        heads = [
+            max((it for it in items if it["text"].startswith(h)), key=lambda it: it["cy"], default=None)
+            for h in _TABLE_HEADERS
+        ]
+        if not all(heads):
+            continue  # 표가 없는 쪽 (끝의 빈 쪽 등)
+        found_table = True
+
+        # 열 경계 = 이웃한 머리글 가운데 사이의 중간 (주소 | 매물 | 호/준/면 | 금액 | 비고)
+        addr_right, ho_left, ho_right, price_right = [(a["cx"] + b["cx"]) / 2 for a, b in zip(heads, heads[1:])]
+        header_y = heads[2]["cy"]
+        body = [it for it in items if it["cy"] < header_y - 4]
+
+        ho_col = [it for it in body if ho_left <= it["cx"] <= ho_right]
+        # 블록 첫 줄 = 호/준/면 열에서 준공·면적이 아닌 칸 (위 → 아래 순)
+        anchors = sorted(
+            (it for it in ho_col if not _P_TABLE_BUILT.match(it["text"]) and "㎡" not in it["text"]),
+            key=lambda it: -it["cy"],
+        )
+        # 면적 칸(0㎡ / 0P)은 매물마다 하나씩 찍힌다. 첫 줄 수와 다르면 블록을 잘못 자른 것이므로
+        # (호수 칸이 비었거나 준공 칸 형식이 다름) 엉뚱한 매물에 가격을 반영하기 전에 멈춘다.
+        areas = sum("㎡" in it["text"] for it in ho_col)
+        if len(anchors) != areas:
+            raise ValueError(f"{page_no}쪽 표를 읽지 못했습니다 (호수 칸 {len(anchors)}개, 면적 칸 {areas}개)")
+        # 각 줄은 같은 행이거나 바로 위에 있는 첫 줄의 블록에 속한다
+        blocks = [[] for _ in anchors]
+        for it in body:
+            above = [i for i, a in enumerate(anchors) if a["cy"] >= it["cy"] - 5]
+            if above:
+                blocks[above[-1]].append(it)
+
+        for anchor, block in zip(anchors, blocks):
+            first_row = [it for it in block if abs(it["cy"] - anchor["cy"]) < 5]
+            name = next((it["text"] for it in first_row if it["x0"] < addr_right), "")
+            price_text = next((it["text"] for it in first_row if ho_right <= it["x0"] < price_right), "")
+
+            addr = None
+            for it in sorted(block, key=lambda it: -it["cy"]):
+                m = _P_TABLE_ADDR.match(it["text"])
+                if m and it["x0"] < addr_right:
+                    addr = (m.group("dong"), m.group("jibeon"))
+                    break
+            if addr is None and not name:
+                addr = last_addr  # 같은 건물의 다른 호실
+            last_addr = addr
+
+            m_ho = re.search(r"\d{1,4}", anchor["text"].split("/")[0])
+            if addr is None or m_ho is None:
+                continue
+
+            deposit = rent = mfee = None
+            m_price = _P_TABLE_PRICE.match(price_text)
+            if m_price and not m_price.group("sale"):  # 매매가는 동기화 대상이 아니다
+                deposit, rent, mfee = [
+                    int(v.replace(",", "")) if v else None
+                    for v in m_price.group("deposit", "rent", "mfee")
+                ]
+
+            results.append({
+                "dong": addr[0],
+                "jibeon": addr[1],
+                "ho": str(int(m_ho.group(0))),
+                "deposit": deposit,
+                "rent": rent,
+                "maintenance_fee": mfee,
+            })
+
+    return results if found_table else None
+
+
+def _parse_legacy_text_pdf(pdf_bytes: bytes):
+    """예전 온하우스 텍스트 양식 PDF에서 (동, 지번, 호, 가격) 항목을 추출한다.
 
     온하우스 양식 PDF는 pdfminer로 텍스트를 뽑으면 보통
     1) 주소(동/지번/호/층) 블록이 쭉 나오고,
@@ -741,9 +874,6 @@ def parse_pdf_for_units(pdf_bytes: bytes):
       ...
     ]
     """
-    if extract_text is None:
-        raise RuntimeError("pdfminer.six 미설치: `pip install pdfminer.six` 필요")
-
     text = extract_text(BytesIO(pdf_bytes))
     raw_lines = list(text.splitlines())
 
@@ -858,7 +988,13 @@ def reconcile_upload():
         try:
             for f in valid:
                 pdf_bytes = f.read()
-                parsed_all.extend(parse_pdf_for_units(pdf_bytes))
+                units = parse_pdf_for_units(pdf_bytes)
+                # 못 읽은 파일이 있으면 멈춘다. 그대로 진행하면 그 파일의 매물이 숨김 후보가 되고,
+                # 전부 0건이면 동 필터가 꺼져 등록된 모든 매물이 숨김 후보가 된다.
+                if not units:
+                    flash(f"'{f.filename}'에서 매물을 찾지 못했습니다. 온하우스 매물 출력물이 맞는지 확인해주세요. (변경된 내용 없음)", "warning")
+                    return redirect(url_for("reconcile_upload"))
+                parsed_all.extend(units)
         except Exception as e:
             flash(f"파싱 실패: {e}", "danger")
             return redirect(url_for("reconcile_upload"))
